@@ -1,5 +1,5 @@
 {
-  "best_threshold": 0.33999999999999997,
+  "best_threshold": 0.45,
   "n_mfcc": 40,
   "max_len": 300,
   "sr": 16000,

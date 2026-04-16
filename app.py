@@ -330,6 +330,18 @@ if uploaded is not None:
         tmp.write(uploaded.read())
         tmp_path = tmp.name
 
+    # Check audio duration
+    y_check, _ = librosa.load(tmp_path, sr=MODEL_CONFIG["sr"])
+    duration_sec = len(y_check) / MODEL_CONFIG["sr"]
+
+    if duration_sec < 10:
+        st.warning(
+            f"Audio is only **{duration_sec:.1f}s** long. "
+            "This model was trained on clinical interview recordings (1-20 minutes). "
+            "Short clips like laughs, sounds, or brief phrases may produce unreliable results. "
+            "For best accuracy, upload a longer conversational speech recording."
+        )
+
     # Extract features
     with st.spinner("Extracting audio features..."):
         features = extract_mfcc(tmp_path)
