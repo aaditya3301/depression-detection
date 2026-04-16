@@ -4,7 +4,7 @@ import librosa
 import tempfile
 import os
 import json
-import tensorflow as tf
+import onnxruntime as ort
 from pathlib import Path
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -206,32 +206,21 @@ st.markdown("""
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
-def find_default_model_path() -> Path | None:
-    """Find a usable model inside models/ with common Keras formats."""
-    preferred_names = [
-        "best_depression_model.keras",
-        "depression_model.keras",
-        "depression_model.h5",
-        "best_depression_model.h5",
-    ]
-    for name in preferred_names:
-        candidate = MODELS_DIR / name
-        if candidate.exists():
-            return candidate
-
-    file_candidates = []
-    for ext in ("*.keras", "*.h5", "*.hdf5"):
-        file_candidates.extend(MODELS_DIR.glob(ext))
-    if file_candidates:
-        return max(file_candidates, key=lambda p: p.stat().st_mtime)
+def find_model_path() -> Path | None:
+    """Find a usable ONNX or Keras model inside models/."""
+    # Prefer ONNX
+    onnx_candidates = list(MODELS_DIR.glob("*.onnx"))
+    if onnx_candidates:
+        return max(onnx_candidates, key=lambda p: p.stat().st_mtime)
 
     return None
 
 
 @st.cache_resource
 def load_model(model_path: str):
-    """Load the trained Keras model (cached across reruns)."""
-    return tf.keras.models.load_model(model_path)
+    """Load the ONNX model (cached across reruns)."""
+    session = ort.InferenceSession(model_path)
+    return session
 
 
 def extract_mfcc(file_path: str, max_len: int = None, n_mfcc: int = None) -> np.ndarray | None:
@@ -266,11 +255,13 @@ def extract_mfcc(file_path: str, max_len: int = None, n_mfcc: int = None) -> np.
         return None
 
 
-def predict(model, features: np.ndarray) -> tuple[float, str]:
-    """Run inference and return (probability, label)."""
+def predict(session, features: np.ndarray) -> tuple[float, str]:
+    """Run ONNX inference and return (probability, label)."""
     threshold = MODEL_CONFIG["best_threshold"]
-    x = features[np.newaxis, ...]
-    prob = float(model.predict(x, verbose=0)[0][0])
+    x = features[np.newaxis, ...]  # (1, max_len, n_features)
+    input_name = session.get_inputs()[0].name
+    output = session.run(None, {input_name: x})
+    prob = float(output[0][0][0])
     label = "Depressed" if prob >= threshold else "Not Depressed"
     return prob, label
 
@@ -305,7 +296,7 @@ st.markdown(f"""
 st.markdown('<hr class="custom-divider">', unsafe_allow_html=True)
 
 # ── Load model silently ───────────────────────────────────────────────────────
-auto_model_path = find_default_model_path()
+auto_model_path = find_model_path()
 model = None
 
 if auto_model_path and os.path.exists(str(auto_model_path)):
@@ -314,13 +305,13 @@ if auto_model_path and os.path.exists(str(auto_model_path)):
     except Exception as e:
         st.error(f"Could not load model: {e}")
 else:
-    st.warning("No model found in the `models/` folder. Please add your trained `.keras` or `.h5` model there.")
+    st.warning("No ONNX model found in the `models/` folder. Please add your `depression_model.onnx` file there.")
 
 # ── Upload section ─────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="upload-section">
     <h3>Upload Audio File</h3>
-    <p>Supported format: WAV • Mono or stereo • Any sample rate (resampled to 16 kHz)</p>
+    <p>Supported format: WAV - Mono or stereo - Any sample rate (resampled to 16 kHz)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -350,7 +341,7 @@ if uploaded is not None:
         st.markdown(f"""
         <div style="text-align: center; margin: 1rem 0;">
             <span class="feature-badge">File: {uploaded.name}</span>
-            <span class="feature-badge">Shape: {features.shape[0]} × {features.shape[1]}</span>
+            <span class="feature-badge">Shape: {features.shape[0]} x {features.shape[1]}</span>
             <span class="feature-badge">Ready for analysis</span>
         </div>
         """, unsafe_allow_html=True)
@@ -397,6 +388,6 @@ st.markdown("""
 <div class="footer">
     This tool is for <strong>research purposes only</strong> and is not a clinical diagnostic instrument.<br>
     If you or someone you know is struggling, please reach out to a mental health professional.<br><br>
-    Built with DAIC-WOZ Dataset • BiLSTM • MFCC Features
+    Built with DAIC-WOZ Dataset - BiLSTM - MFCC Features
 </div>
 """, unsafe_allow_html=True)
